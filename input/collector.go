@@ -9,12 +9,16 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var sequenceNumber int64
-var stats = expvar.NewMap("input")
+var (
+	sequenceNumber int64
+	stats                      = expvar.NewMap("input")
+	mutex          *sync.Mutex = &sync.Mutex{}
+)
 
 func init() {
 	sequenceNumber = time.Now().UnixNano()
@@ -105,6 +109,10 @@ func (s *TCPCollector) Addr() net.Addr {
 
 func (s *TCPCollector) handleConnection(conn net.Conn, c chan<- *Event) {
 	stats.Add("tcpConnections", 1)
+	mutex.Lock()
+	s.connRemoteAddr = conn.RemoteAddr().String()
+	s.channel = c
+	mutex.Unlock()
 	defer func() {
 		stats.Add("tcpConnections", -1)
 		conn.Close()
@@ -122,30 +130,89 @@ func (s *TCPCollector) handleConnection(conn net.Conn, c chan<- *Event) {
 			stats.Add("tcpConnReadError", 1)
 			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
 				stats.Add("tcpConnReadTimeout", 1)
-				log, match = delimiter.Vestige()
+				s.recover()
 			} else if err == io.EOF {
 				stats.Add("tcpConnReadEOF", 1)
-				log, match = delimiter.Vestige()
+				s.recover()
 			} else {
 				stats.Add("tcpConnUnrecoverError", 1)
 				return
 			}
 		} else {
 			stats.Add("tcpBytesRead", 1)
-			log, match = delimiter.Push(b)
-		}
-		if match {
-			stats.Add("tcpEventsRx", 1)
-			if s.parser.Parse(bytes.NewBufferString(log).Bytes()) {
-				c <- &Event{
-					Text:          string(s.parser.Raw),
-					Parsed:        s.parser.Result,
-					ReceptionTime: time.Now().UTC(),
-					Sequence:      atomic.AddInt64(&sequenceNumber, 1),
-					SourceIP:      conn.RemoteAddr().String(),
-				}
+			if s.parser.Fmt == "rfc5424" && s.fallbackMode {
+				s.useFallbackDelimiter(b)
+			} else {
+				s.useDelimiter(b)
 			}
 		}
+	}
+}
+
+// Takes use of the standard delimiter
+// and switches to the fallback delimiter in case
+// of occuring errors.
+func (s *TCPCollector) useDelimiter(b byte) {
+	match, err := s.delimiter.Push(b)
+	if err != nil {
+		if s.parser.Fmt == "rfc5424" {
+			s.fallbackMode = true
+			s.delimiter.Reset()
+			if s.delimiter.Result != "" {
+				for i := 0; i < len(s.delimiter.Result); i++ {
+					s.useFallbackDelimiter(s.delimiter.Result[i])
+				}
+			} else {
+				s.useFallbackDelimiter(b)
+			}
+			return
+		}
+		stats.Add("tcpDelimiterBroken", 1)
+	}
+	if match {
+		s.forwardLog(s.delimiter.Result)
+	}
+}
+
+// Takes use of the fallback delimiter.
+func (s *TCPCollector) useFallbackDelimiter(b byte) {
+	log, match := s.fDelimiter.Push(b)
+	if match {
+		s.forwardLog(log)
+	}
+}
+
+// Tries to revover from occuring network errors.
+func (s *TCPCollector) recover() bool {
+	if !s.fallbackMode {
+		mutex.Lock()
+		s.delimiter.Reset()
+		for i := 0; i < len(s.delimiter.Result); i++ {
+			s.useFallbackDelimiter(s.delimiter.Result[i])
+		}
+		mutex.Unlock()
+	} else {
+		log, match := s.fDelimiter.Vestige()
+		if match {
+			s.forwardLog(log)
+		}
+	}
+	return true
+}
+
+// Sends the parsed log via the provided channel.
+func (s *TCPCollector) forwardLog(log string) {
+	stats.Add("tcpEventsRx", 1)
+	if s.parser.Parse(bytes.NewBufferString(log).Bytes()) {
+		mutex.Lock()
+		s.channel <- &Event{
+			Text:          string(s.parser.Raw),
+			Parsed:        s.parser.Result,
+			ReceptionTime: time.Now().UTC(),
+			Sequence:      atomic.AddInt64(&sequenceNumber, 1),
+			SourceIP:      s.connRemoteAddr,
+		}
+		mutex.Unlock()
 	}
 }
 
@@ -165,6 +232,7 @@ func (s *UDPCollector) Start(c chan<- *Event) error {
 				continue
 			}
 			log := strings.Trim(string(buf[:n]), "\r\n")
+			stats.Add("udpEventsRx", 1)
 			if s.parser.Parse(bytes.NewBufferString(log).Bytes()) {
 				c <- &Event{
 					Text:          log,
@@ -174,7 +242,6 @@ func (s *UDPCollector) Start(c chan<- *Event) error {
 					SourceIP:      addr.String(),
 				}
 			}
-			stats.Add("udpEventsRx", 1)
 		}
 	}()
 	return nil
