@@ -120,8 +120,6 @@ func (s *TCPCollector) handleConnection(conn net.Conn, c chan<- *Event) {
 
 	delimiter := NewSyslogDelimiter(msgBufSize)
 	reader := bufio.NewReader(conn)
-	var log string
-	var match bool
 
 	for {
 		conn.SetReadDeadline(time.Now().Add(newlineTimeout))
