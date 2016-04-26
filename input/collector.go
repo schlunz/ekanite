@@ -1,11 +1,9 @@
 package input
 
 import (
-	"bufio"
 	"crypto/tls"
 	"expvar"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -32,12 +30,10 @@ type Collector interface {
 
 // TCPCollector represents a network collector that accepts and handler TCP connections.
 type TCPCollector struct {
-	iface  string
-	fmt    string
-	parser *RFC5424Parser
-
-	addr      net.Addr
-	tlsConfig *tls.Config
+	iface, fmt, delimType string
+	parser                *RFC5424Parser
+	addr                  net.Addr
+	tlsConfig             *tls.Config
 }
 
 // UDPCollector represents a network collector that accepts UDP packets.
@@ -50,16 +46,26 @@ type UDPCollector struct {
 // NewCollector returns a network collector of the specified type, that will bind
 // to the given inteface on Start(). If config is non-nil, a secure Collector will
 // be returned. Secure Collectors require the protocol be TCP.
-func NewCollector(proto, iface, format string, tlsConfig *tls.Config) (Collector, error) {
+func NewCollector(proto, iface, format, delimType string, tlsConfig *tls.Config) (Collector, error) {
 	parser := NewRFC5424Parser()
 	if format != "syslog" {
 		return nil, fmt.Errorf("unsupported collector format")
 	}
-
+	var found bool
+	for _, typ := range []string{"syslog", "netstr"} {
+		if typ == delimType {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("unsupported delimiter type")
+	}
 	if strings.ToLower(proto) == "tcp" {
 		return &TCPCollector{
 			iface:     iface,
 			fmt:       format,
+			delimType: delimType,
 			parser:    parser,
 			tlsConfig: tlsConfig,
 		}, nil
@@ -95,7 +101,11 @@ func (s *TCPCollector) Start(c chan<- *Event) error {
 			if err != nil {
 				continue
 			}
-			go s.handleConnection(conn, c)
+			if s.delimType == "netstr" {
+				go s.handleConnNetstr(conn, c)
+			} else {
+				go s.handleConnSyslog(conn, c)
+			}
 		}
 	}()
 	return nil
@@ -104,50 +114,6 @@ func (s *TCPCollector) Start(c chan<- *Event) error {
 // Addr returns the net.Addr that the Collector is bound to, in a race-say manner.
 func (s *TCPCollector) Addr() net.Addr {
 	return s.addr
-}
-
-func (s *TCPCollector) handleConnection(conn net.Conn, c chan<- *Event) {
-	stats.Add("tcpConnections", 1)
-	defer func() {
-		stats.Add("tcpConnections", -1)
-		conn.Close()
-	}()
-
-	delimiter := NewSyslogDelimiter(msgBufSize)
-	reader := bufio.NewReader(conn)
-	var log string
-	var match bool
-
-	for {
-		conn.SetReadDeadline(time.Now().Add(newlineTimeout))
-		b, err := reader.ReadByte()
-		if err != nil {
-			stats.Add("tcpConnReadError", 1)
-			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-				stats.Add("tcpConnReadTimeout", 1)
-				log, match = delimiter.Vestige()
-			} else if err == io.EOF {
-				stats.Add("tcpConnReadEOF", 1)
-				log, match = delimiter.Vestige()
-			} else {
-				stats.Add("tcpConnUnrecoverError", 1)
-				return
-			}
-		} else {
-			stats.Add("tcpBytesRead", 1)
-			log, match = delimiter.Push(b)
-		}
-		if match {
-			stats.Add("tcpEventsRx", 1)
-			c <- &Event{
-				Text:          log,
-				Parsed:        s.parser.Parse(log),
-				ReceptionTime: time.Now().UTC(),
-				Sequence:      atomic.AddInt64(&sequenceNumber, 1),
-				SourceIP:      conn.RemoteAddr().String(),
-			}
-		}
-	}
 }
 
 // Start instructs the UDPCollector to start reading packets from the interface.

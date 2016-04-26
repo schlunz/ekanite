@@ -44,6 +44,7 @@ var retentionPeriod string
 var cpuProfile string
 var memProfile string
 var inputFormat string
+var delimType string
 
 // Flag set
 var fs *flag.FlagSet
@@ -61,6 +62,7 @@ const (
 	DefaultDiagsIface      = "localhost:9951"
 	DefaultTCPServer       = "localhost:5514"
 	DefaultInputFormat     = "syslog"
+	DefaultDelimType       = "syslog"
 )
 
 func main() {
@@ -82,6 +84,7 @@ func main() {
 		cpuProfile      = fs.String("cpuprof", "", "Where to write CPU profiling data. Not written if not set")
 		memProfile      = fs.String("memprof", "", "Where to write memory profiling data. Not written if not set")
 		inputFormat     = fs.String("input", DefaultInputFormat, "Message format of input (only syslog supported)")
+		delimType       = fs.String("delimiter", DefaultDelimType, "either 'syslog' or 'netstr'")
 	)
 	fs.Usage = printHelp
 	fs.Parse(os.Args[1:])
@@ -191,7 +194,7 @@ func main() {
 			log.Printf("TLS successfully configured")
 		}
 
-		collector, err := input.NewCollector("tcp", *tcpIface, *inputFormat, tlsConfig)
+		collector, err := input.NewCollector("tcp", *tcpIface, *inputFormat, *delimType, tlsConfig)
 		if err != nil {
 			log.Fatalf("failed to create TCP collector: %s", err.Error())
 		}
@@ -203,7 +206,7 @@ func main() {
 
 	// Start UDP collector if requested.
 	if *udpIface != "" {
-		collector, err := input.NewCollector("udp", *udpIface, *inputFormat, nil)
+		collector, err := input.NewCollector("udp", *udpIface, *inputFormat, *delimType, nil)
 		if collector == nil {
 			log.Fatalf("failed to create UDP collector: %s", err.Error())
 		}
