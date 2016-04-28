@@ -42,7 +42,8 @@ func NewNetstrDelimiter() *NetstrDelimiter {
 	}
 }
 
-// Push the given byte into a buffer, return when a new result is available,
+// Push the given byte into a buffer,
+// and return rather a new result is available,
 // as well as the first occurring error (if any occurred).
 func (d *NetstrDelimiter) Push(b byte) (bool, error) {
 	if d.brokenMode {
@@ -51,14 +52,15 @@ func (d *NetstrDelimiter) Push(b byte) (bool, error) {
 	return d.processByte(b)
 }
 
-// Reset the NetstrDelimiter instance to its initial state.
+// Reset the instance close to its initial state.
 func (d *NetstrDelimiter) Reset() {
 	mutex.Lock()
 	d.useLenBuff()
 	mutex.Unlock()
 }
 
-// processByte checks if a byte must be processed as "length byte" or as "value byte".
+// Checks rather a byte must be processed as "length byte"
+// or as "value byte".
 func (d *NetstrDelimiter) processByte(b byte) (bool, error) {
 	if d.valBuffMode {
 		return d.processValByte(b)
@@ -66,7 +68,7 @@ func (d *NetstrDelimiter) processByte(b byte) (bool, error) {
 	return d.processLenByte(b)
 }
 
-// processLenBytes writes the passed byte to the "length buffer",
+// Writes the passed byte to the "length buffer",
 // unless the passed byte is the end of the "length buffer".
 func (d *NetstrDelimiter) processLenByte(b byte) (bool, error) {
 	if b == LenBuffEnd[0] {
@@ -83,7 +85,7 @@ func (d *NetstrDelimiter) processLenByte(b byte) (bool, error) {
 	return NoResult, lenInvErr
 }
 
-// checkLenByte checks that the current byte is a digit.
+// Checks rather the current byte is a digit.
 func (d *NetstrDelimiter) checkLenByte(b byte) bool {
 	for i := 0; i < 10; i++ {
 		if strconv.Itoa(i)[0] == b {
@@ -93,7 +95,7 @@ func (d *NetstrDelimiter) checkLenByte(b byte) bool {
 	return false
 }
 
-// processValByte writess the passed byte to the "value buffer",
+// Writes the passed byte to the "value buffer",
 // unless the "value buffer length" is equal to 0.
 func (d *NetstrDelimiter) processValByte(b byte) (bool, error) {
 	if d.valBuffLen == 0 {
@@ -113,7 +115,7 @@ func (d *NetstrDelimiter) processValByte(b byte) (bool, error) {
 	return NoResult, nil
 }
 
-// useLenBuff overwrites the old result and resets values.
+// Overwrites the old result and resets values.
 func (d *NetstrDelimiter) useLenBuff() {
 	if d.ignoreMode {
 		d.Result = ""
@@ -125,7 +127,7 @@ func (d *NetstrDelimiter) useLenBuff() {
 	d.valBuffMode = false
 }
 
-// useValBuff converts the "length buffer" value to an integer,
+// Converts the "length buffer" value to an integer,
 // representing the "value buffer length" and resets values.
 func (d *NetstrDelimiter) useValBuff() error {
 	if d.valBuffLen, err = strconv.Atoi(d.lenBuff.String()); err != nil {
