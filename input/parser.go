@@ -1,8 +1,8 @@
 package input
 
 import (
-	"strings"
 	"errors"
+	"strings"
 )
 
 var (
