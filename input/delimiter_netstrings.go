@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"strconv"
-	"sync"
 )
 
 const (
@@ -15,7 +14,6 @@ const (
 
 var (
 	err        error
-	mutex      *sync.Mutex = &sync.Mutex{}
 	brokenErr              = errors.New("broken")
 	lenIncErr              = errors.New("length-buffer-incomplete")
 	lenInvErr              = errors.New("length-buffer-invalid-byte")

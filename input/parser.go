@@ -2,6 +2,7 @@ package input
 
 import (
 	"strings"
+	"errors"
 )
 
 var (
